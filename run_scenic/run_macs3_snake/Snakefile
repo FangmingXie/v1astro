@@ -1,0 +1,139 @@
+# =============================================================================
+# Snakemake Pipeline — MACS3 Peak Calling | ATAC-seq | 10x fragments | mm10
+#
+# Usage:
+#   snakemake --cores 4
+#   snakemake --cores 4 --use-conda   # if using conda envs
+#
+# Directory layout expected:
+#   data/
+#     {sample}_fragments.tsv.gz    <- 10x-style fragments files
+#   Snakefile
+#   config.yaml
+# =============================================================================
+
+configfile: "config.yaml"
+
+SAMPLES   = config["samples"]
+OUTDIR    = config["outdir"]
+BLACKLIST = config["blacklist"]
+GENOME    = config["genome"]        # e.g. "mm" for mouse
+
+
+# -----------------------------------------------------------------------------
+# Target rule — defines final outputs
+# -----------------------------------------------------------------------------
+rule all:
+    input:
+        expand("{outdir}/{sample}_peaks.filtered.narrowPeak", outdir=OUTDIR, sample=SAMPLES),
+        # expand("{outdir}/{sample}.bw",                        outdir=OUTDIR, sample=SAMPLES),
+
+
+# -----------------------------------------------------------------------------
+# Rule 1 — Convert fragments.tsv.gz → BED
+# -----------------------------------------------------------------------------
+rule fragments_to_bed:
+    input:
+        fragments = "data/{sample}_fragments.tsv.gz",
+    output:
+        bed = temp("{outdir}/{sample}_fragments.bed"),
+    log:
+        "{outdir}/logs/{sample}_fragments_to_bed.log",
+    shell:
+        """
+        zcat {input.fragments} \
+            | awk 'BEGIN{{OFS="\\t"}} !/^#/ {{print $1, $2, $3}}' \
+            > {output.bed} \
+            2> {log}
+        """
+
+
+# -----------------------------------------------------------------------------
+# Rule 2 — Call peaks with MACS3
+# -----------------------------------------------------------------------------
+rule macs3_callpeak:
+    input:
+        bed = "{outdir}/{sample}_fragments.bed",
+    output:
+        narrowpeak  = "{outdir}/{sample}_peaks.narrowPeak",
+        summits     = "{outdir}/{sample}_summits.bed",
+        pileup_bdg  = "{outdir}/{sample}_treat_pileup.bdg",
+        lambda_bdg  = "{outdir}/{sample}_control_lambda.bdg",
+    log:
+        "{outdir}/logs/{sample}_macs3.log",
+    params:
+        genome   = GENOME,
+        name     = "{sample}",
+        outdir   = OUTDIR,
+        qvalue   = config.get("qvalue", 0.05),
+        shift    = config.get("shift",  -100),
+        extsize  = config.get("extsize", 200),
+    shell:
+        """
+        macs3 callpeak \
+            -t {input.bed} \
+            -f BED \
+            -n {params.name} \
+            --outdir {params.outdir} \
+            -g {params.genome} \
+            --nomodel \
+            --shift {params.shift} \
+            --extsize {params.extsize} \
+            -q {params.qvalue} \
+            --call-summits \
+            2> {log}
+        """
+
+# -----------------------------------------------------------------------------
+# Rule 4 — Filter blacklist regions from peaks
+# -----------------------------------------------------------------------------
+rule filter_blacklist:
+    input:
+        narrowpeak = "{outdir}/{sample}_peaks.narrowPeak",
+        blacklist  = BLACKLIST,
+    output:
+        filtered = "{outdir}/{sample}_peaks.filtered.narrowPeak",
+    log:
+        "{outdir}/logs/{sample}_blacklist_filter.log",
+    shell:
+        """
+        bedtools intersect \
+            -v \
+            -a {input.narrowpeak} \
+            -b {input.blacklist} \
+            > {output.filtered} \
+            2> {log}
+        """
+
+
+# # -----------------------------------------------------------------------------
+# # Rule 5 — Fetch mm10 chrom sizes (runs once)
+# # -----------------------------------------------------------------------------
+# rule get_chrom_sizes:
+#     output:
+#         chromsizes = f"{OUTDIR}/mm10.chrom.sizes",
+#     log:
+#         f"{OUTDIR}/logs/chrom_sizes.log",
+#     shell:
+#         """
+#         fetchChromSizes mm10 > {output.chromsizes} 2> {log}
+#         """
+
+
+# # -----------------------------------------------------------------------------
+# # Rule 6 — Convert pileup bedgraph → bigwig
+# # -----------------------------------------------------------------------------
+# rule bedgraph_to_bigwig:
+#     input:
+#         pileup     = "{outdir}/{sample}_treat_pileup.bdg",
+#         chromsizes = f"{OUTDIR}/mm10.chrom.sizes",
+#     output:
+#         bigwig = "{outdir}/{sample}.bw",
+#     log:
+#         "{outdir}/logs/{sample}_bigwig.log",
+#     shell:
+#         """
+#         bedtools sort -i {input.pileup} \
+#             | bedGraphToBigWig - {input.chromsizes} {output.bigwig} \
+#             2> {log}
+#         """
