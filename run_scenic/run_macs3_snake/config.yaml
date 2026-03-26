@@ -1,0 +1,21 @@
+# =============================================================================
+# config.yaml — MACS3 ATAC-seq Peak Calling Pipeline
+# =============================================================================
+
+# List of sample names (must match data/{sample}_fragments.tsv.gz filenames)
+samples:
+  - astro_merged
+
+# Output directory
+outdir: "/home/qlyu/mydata/data/v1_astro/macs3"
+
+# Genome size for MACS3 (-g flag): "mm" for mouse, "hs" for human
+genome: "mm"
+
+# Blacklist file path (downloaded automatically if missing)
+blacklist: "resources/mm10.blacklist.bed"
+
+# MACS3 parameters
+qvalue:  0.01
+shift:   -75
+extsize: 150
